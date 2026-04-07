@@ -1,0 +1,47 @@
+{
+  "name": "telegram-codex-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-ready Telegram service for managing Codex tasks",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.5.0",
+    "fastify": "^5.2.1",
+    "grammy": "^1.38.2",
+    "pg": "^8.16.3",
+    "pino": "^9.7.0",
+    "pino-http": "^10.4.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.15.5",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "eslint": "^9.22.0",
+    "eslint-config-prettier": "^10.1.1",
+    "globals": "^16.0.0",
+    "pg-mem": "^3.0.5",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
