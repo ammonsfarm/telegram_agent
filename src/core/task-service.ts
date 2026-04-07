@@ -37,8 +37,37 @@ export class TaskService {
     return task;
   }
 
+  async createResumeTask(
+    userId: number,
+    chatId: number,
+    workspaceAlias: string,
+    threadId: string,
+    promptPreview: string
+  ): Promise<TaskRecord> {
+    const task = await this.createTask(userId, chatId, workspaceAlias, promptPreview);
+    await this.repository.updateTaskStatus(task.id, 'queued', {
+      runnerTaskId: threadId,
+      summary: 'Queued resume from existing Codex thread'
+    });
+    await this.repository.addAuditRecord(task.id, userId, 'task.resume_queued', {
+      threadId
+    });
+    return this.requireTask(task.id);
+  }
+
   async listTasks() {
     return this.repository.listTasks();
+  }
+
+  async listActiveTasks() {
+    return this.repository.listTasksByStatuses(
+      ['queued', 'running', 'waiting_for_approval'],
+      20
+    );
+  }
+
+  async listWaitingTasks() {
+    return this.repository.listTasksByStatuses(['waiting_for_approval'], 20);
   }
 
   async getTask(taskId: string): Promise<TaskRecord | null> {
@@ -69,6 +98,24 @@ export class TaskService {
     await this.repository.requeueTask(taskId);
     await this.repository.addAuditRecord(taskId, userId, 'task.resumed');
     return this.requireTask(taskId);
+  }
+
+  async approveTask(taskId: string, userId: number): Promise<TaskRecord> {
+    const task = await this.requireTask(taskId);
+    if (task.status !== 'waiting_for_approval') {
+      throw new Error(`Task ${taskId} is not waiting for approval`);
+    }
+    if (!task.runnerTaskId) {
+      throw new Error(`Task ${taskId} has no Codex thread id to approve`);
+    }
+
+    return this.createResumeTask(
+      userId,
+      task.chatId,
+      task.workspaceAlias,
+      task.runnerTaskId,
+      'Approval granted. Continue with the task.'
+    );
   }
 
   async getHealth() {

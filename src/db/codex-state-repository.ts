@@ -63,4 +63,23 @@ export class CodexStateRepository {
 
     return row ? mapThread(row) : null;
   }
+
+  async listRecentThreadsByWorkspaces(cwds: string[], limit = 20): Promise<CodexThreadView[]> {
+    if (cwds.length === 0) {
+      return [];
+    }
+
+    const placeholders = cwds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT id, cwd, updated_at, title, first_user_message
+         FROM threads
+         WHERE cwd IN (${placeholders}) AND archived = 0
+         ORDER BY updated_at DESC
+         LIMIT ?`
+      )
+      .all(...cwds, limit) as ThreadRow[];
+
+    return rows.map(mapThread);
+  }
 }

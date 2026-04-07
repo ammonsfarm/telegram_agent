@@ -123,6 +123,11 @@ export class TaskRepository {
   }
 
   async listTasks(limit = 20): Promise<TaskSummaryView[]> {
+    return this.listTasksByStatuses([], limit);
+  }
+
+  async listTasksByStatuses(statuses: TaskStatus[], limit = 20): Promise<TaskSummaryView[]> {
+    const filterClause = statuses.length > 0 ? 'WHERE status = ANY($2::text[])' : '';
     const result = await this.db.query<
       QueryResultRow & {
         id: string;
@@ -135,9 +140,10 @@ export class TaskRepository {
     >(
       `SELECT id, workspace_alias, status, created_at, updated_at, summary
        FROM tasks
+       ${filterClause}
        ORDER BY created_at DESC
        LIMIT $1`,
-      [limit]
+      statuses.length > 0 ? [limit, statuses] : [limit]
     );
 
     return result.rows.map((row) => ({

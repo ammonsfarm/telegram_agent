@@ -18,6 +18,10 @@ export const buildHelpText = (workspaces: string[]): string => {
     '/ask <workspace> <prompt>',
     '/chats',
     '/chats <workspace>',
+    '/active',
+    '/waiting',
+    '/send <task_or_thread_id> <instruction>',
+    '/approve <task_or_thread_id>',
     '/status <task_id>',
     '/tasks',
     '/logs <task_id>',
@@ -37,6 +41,47 @@ export const buildTaskListText = (tasks: TaskSummaryView[]): string => {
   }
 
   return tasks.map(describeTask).join('\n\n');
+};
+
+export const buildManagerTaskText = (title: string, tasks: TaskSummaryView[]): string => {
+  if (tasks.length === 0) {
+    return `${title}\nNone.`;
+  }
+
+  return [
+    title,
+    ...tasks.map(
+      (task) =>
+        `${task.id}\nworkspace=${task.workspaceAlias}\nstatus=${task.status}\nupdated=${task.updatedAt}\nsummary=${task.summary ?? 'n/a'}`
+    )
+  ].join('\n\n');
+};
+
+export const buildActiveOverviewText = (
+  tasks: TaskSummaryView[],
+  threads: CodexThreadView[]
+): string => {
+  const managed = tasks.length === 0
+    ? 'Managed active tasks:\nNone.'
+    : [
+        'Managed active tasks:',
+        ...tasks.map(
+          (task) =>
+            `${task.id}\nworkspace=${task.workspaceAlias}\nstatus=${task.status}\nupdated=${task.updatedAt}\nsummary=${task.summary ?? 'n/a'}`
+        )
+      ].join('\n\n');
+
+  const native = threads.length === 0
+    ? 'Recent Codex threads:\nNone.'
+    : [
+        'Recent Codex threads:',
+        ...threads.map(
+          (thread) =>
+            `${thread.id}\ncwd=${thread.cwd}\nupdated=${thread.updatedAt}\nprompt=${thread.promptPreview}`
+        )
+      ].join('\n\n');
+
+  return `${managed}\n\n${native}`;
 };
 
 export const buildWorkspaceChooserText = (workspaces: string[]): string => {

@@ -10,6 +10,7 @@ import { TaskService } from '../src/core/task-service';
 
 export class FakeRunner implements CodexRunner {
   public readonly cancellations: string[] = [];
+  public readonly resumeCalls: string[] = [];
   public mode: 'completed' | 'approval' | 'failed' = 'completed';
 
   async runTask(
@@ -23,6 +24,7 @@ export class FakeRunner implements CodexRunner {
     input: RunTaskInput,
     onEvent: (event: RunnerEvent) => void
   ): Promise<RunningHandle> {
+    this.resumeCalls.push(input.task.runnerTaskId ?? input.task.id);
     return this.execute(input, onEvent, true);
   }
 
@@ -105,6 +107,12 @@ export class FakeCodexStateRepository {
 
   async listThreadsByWorkspace(cwd: string): Promise<CodexThreadView[]> {
     return this.threads.filter((thread) => thread.cwd === cwd);
+  }
+
+  async listRecentThreadsByWorkspaces(cwds: string[]): Promise<CodexThreadView[]> {
+    return this.threads
+      .filter((thread) => cwds.includes(thread.cwd))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async getThread(threadId: string): Promise<CodexThreadView | null> {

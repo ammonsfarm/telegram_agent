@@ -63,7 +63,11 @@ const inferEvent = (line: string): RunnerEvent => {
 };
 
 const buildArgs = (config: AppConfig, task: TaskRecord, workspacePath: string): string[] => {
-  return [...config.codexArgs, '--cwd', workspacePath, task.prompt];
+  const args = [...config.codexArgs, '--cwd', workspacePath];
+  if (task.prompt.trim()) {
+    args.push(task.prompt);
+  }
+  return args;
 };
 
 export class CodexCliRunner implements CodexRunner {
@@ -101,7 +105,7 @@ export class CodexCliRunner implements CodexRunner {
   ): Promise<RunningHandle> {
     const args = buildArgs(this.config, input.task, input.workspacePath);
     if (isResume) {
-      args.push('--resume', input.task.id);
+      args.push('--resume', input.task.runnerTaskId ?? input.task.id);
     }
 
     const child = spawn(this.config.codexBinary, args, {

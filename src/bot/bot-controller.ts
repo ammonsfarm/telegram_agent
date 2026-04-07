@@ -7,6 +7,8 @@ import { AuthorizationError, type AuthService } from '../security/auth';
 import type { MemoryRateLimiter } from '../security/rate-limit';
 import { redactSensitiveText } from '../security/redaction';
 import {
+  buildActiveOverviewText,
+  buildManagerTaskText,
   buildDiffText,
   buildHelpText,
   buildLogsText,
@@ -26,7 +28,10 @@ const CALLBACK_PREFIX = {
   thread: 'thread',
   action: 'action',
   backWorkspaces: 'back_workspaces',
-  backChats: 'back_chats'
+  backChats: 'back_chats',
+  sendHint: 'send_hint',
+  resumeThread: 'resume_thread',
+  approveThread: 'approve_thread'
 } as const;
 
 export class BotController {
@@ -115,6 +120,18 @@ export class BotController {
         case '/chats':
           await this.handleChats(chatId, args);
           return;
+        case '/active':
+          await this.handleActive(chatId);
+          return;
+        case '/waiting':
+          await this.handleWaiting(chatId);
+          return;
+        case '/send':
+          await this.handleSend(chatId, userId, args);
+          return;
+        case '/approve':
+          await this.handleApprove(chatId, userId, args);
+          return;
         case '/status':
           await this.handleStatus(chatId, args);
           return;
@@ -166,6 +183,25 @@ export class BotController {
   private async handleStatus(chatId: number, args: string[]): Promise<void> {
     const task = await this.requireTask(args[0]);
     await this.telegramClient.sendMessage(chatId, buildStatusText(task));
+  }
+
+  private async handleActive(chatId: number): Promise<void> {
+    const tasks = await this.taskService.listActiveTasks();
+    const threads = await this.codexStateRepository.listRecentThreadsByWorkspaces(
+      this.workspacePolicy.list().map((workspace) => this.workspacePolicy.resolve(workspace)),
+      10
+    );
+    await this.telegramClient.sendMessage(
+      chatId,
+      buildActiveOverviewText(tasks, threads)
+    );
+  }
+
+  private async handleWaiting(chatId: number): Promise<void> {
+    await this.telegramClient.sendMessage(
+      chatId,
+      buildManagerTaskText('Waiting for approval:', await this.taskService.listWaitingTasks())
+    );
   }
 
   private async handleChats(chatId: number, args: string[]): Promise<void> {
@@ -243,13 +279,14 @@ export class BotController {
       if (data.startsWith(`${CALLBACK_PREFIX.thread}:`)) {
         const threadId = data.slice(`${CALLBACK_PREFIX.thread}:`.length);
         const thread = await this.requireThread(threadId);
+        const workspaceAlias = this.workspaceAliasForCwd(thread.cwd);
         await this.telegramClient.editMessageText(
           chatId,
           messageId,
           buildThreadDetailText(thread),
           {
             replyMarkup: {
-              inline_keyboard: [[{ text: 'Back', callback_data: this.callbackAction(CALLBACK_PREFIX.backChats, thread.id, this.workspaceAliasForCwd(thread.cwd)) }]]
+              inline_keyboard: this.buildThreadActionButtons(thread.id, workspaceAlias)
             }
           }
         );
@@ -257,7 +294,7 @@ export class BotController {
       }
 
       if (data.startsWith(`${CALLBACK_PREFIX.action}:`)) {
-        await this.handleTaskActionCallback(chatId, messageId, data);
+        await this.handleTaskActionCallback(chatId, messageId, callbackQuery.from.id, data);
       }
     } finally {
       await this.telegramClient.answerCallbackQuery(callbackQuery.id);
@@ -267,6 +304,7 @@ export class BotController {
   private async handleTaskActionCallback(
     chatId: number,
     messageId: number,
+    userId: number,
     data: string
   ): Promise<void> {
     const [, action, taskId, workspaceAlias] = data.split(':');
@@ -286,6 +324,48 @@ export class BotController {
             inline_keyboard: this.buildWorkspaceChatButtons(targetWorkspace, chats)
           }
         }
+      );
+      return;
+    }
+
+    if (action === CALLBACK_PREFIX.sendHint) {
+      await this.telegramClient.sendMessage(
+        chatId,
+        `Send a follow-up with:\n/send ${taskId} <instruction>`
+      );
+      return;
+    }
+
+    if (action === CALLBACK_PREFIX.resumeThread) {
+      const thread = await this.requireThread(taskId);
+      const targetWorkspace = this.workspaceAliasForCwd(thread.cwd);
+      const task = await this.taskService.createResumeTask(
+        userId,
+        chatId,
+        targetWorkspace,
+        thread.id,
+        thread.promptPreview || thread.title
+      );
+      await this.telegramClient.sendMessage(
+        chatId,
+        `Queued resume task ${task.id} for Codex thread ${thread.id} in workspace ${targetWorkspace}.`
+      );
+      return;
+    }
+
+    if (action === CALLBACK_PREFIX.approveThread) {
+      const thread = await this.requireThread(taskId);
+      const targetWorkspace = this.workspaceAliasForCwd(thread.cwd);
+      const task = await this.taskService.createResumeTask(
+        userId,
+        chatId,
+        targetWorkspace,
+        thread.id,
+        'Approval granted. Continue with the task.'
+      );
+      await this.telegramClient.sendMessage(
+        chatId,
+        `Queued approval follow-up task ${task.id} for Codex thread ${thread.id}.`
       );
     }
   }
@@ -315,8 +395,98 @@ export class BotController {
   }
 
   private async handleResume(chatId: number, userId: number, args: string[]): Promise<void> {
-    const task = await this.taskService.resumeTask(this.requireTaskId(args[0]), userId);
-    await this.telegramClient.sendMessage(chatId, `Task ${task.id} re-queued for resume.`);
+    const id = this.requireTaskId(args[0]);
+    const existingTask = await this.taskService.getTask(id);
+
+    if (existingTask) {
+      const task = await this.taskService.resumeTask(id, userId);
+      await this.telegramClient.sendMessage(chatId, `Task ${task.id} re-queued for resume.`);
+      return;
+    }
+
+    const thread = await this.requireThread(id);
+    const workspaceAlias = this.workspaceAliasForCwd(thread.cwd);
+    const task = await this.taskService.createResumeTask(
+      userId,
+      chatId,
+      workspaceAlias,
+      thread.id,
+      thread.promptPreview || thread.title
+    );
+    await this.telegramClient.sendMessage(
+      chatId,
+      `Queued resume task ${task.id} for Codex thread ${thread.id} in workspace ${workspaceAlias}.`
+    );
+  }
+
+  private async handleSend(chatId: number, userId: number, args: string[]): Promise<void> {
+    if (args.length < 2) {
+      throw new Error('Usage: /send <task_or_thread_id> <instruction>');
+    }
+
+    const targetId = this.requireTaskId(args[0]);
+    const instruction = args.slice(1).join(' ').trim();
+    if (!instruction) {
+      throw new Error('Instruction is required');
+    }
+
+    const existingTask = await this.taskService.getTask(targetId);
+    if (existingTask?.runnerTaskId) {
+      const task = await this.taskService.createResumeTask(
+        userId,
+        chatId,
+        existingTask.workspaceAlias,
+        existingTask.runnerTaskId,
+        instruction
+      );
+      await this.telegramClient.sendMessage(
+        chatId,
+        `Queued follow-up task ${task.id} for Codex thread ${existingTask.runnerTaskId}.`
+      );
+      return;
+    }
+
+    const thread = await this.requireThread(targetId);
+    const workspaceAlias = this.workspaceAliasForCwd(thread.cwd);
+    const task = await this.taskService.createResumeTask(
+      userId,
+      chatId,
+      workspaceAlias,
+      thread.id,
+      instruction
+    );
+    await this.telegramClient.sendMessage(
+      chatId,
+      `Queued follow-up task ${task.id} for Codex thread ${thread.id} in workspace ${workspaceAlias}.`
+    );
+  }
+
+  private async handleApprove(chatId: number, userId: number, args: string[]): Promise<void> {
+    const targetId = this.requireTaskId(args[0]);
+    const existingTask = await this.taskService.getTask(targetId);
+
+    if (existingTask) {
+      const task = await this.taskService.approveTask(targetId, userId);
+      await this.telegramClient.sendMessage(
+        chatId,
+        `Queued approval follow-up task ${task.id} for prior task ${targetId}.`
+      );
+      return;
+    }
+
+    const thread = await this.requireThread(targetId);
+    const workspaceAlias = this.workspaceAliasForCwd(thread.cwd);
+    const task = await this.taskService.createResumeTask(
+      userId,
+      chatId,
+      workspaceAlias,
+      thread.id,
+      'Approval granted. Continue with the task.'
+    );
+    await this.telegramClient.sendMessage(
+      chatId,
+      `Queued approval follow-up task ${task.id} for Codex thread ${thread.id}.`
+    );
   }
 
   private async handleCancel(chatId: number, userId: number, args: string[]): Promise<void> {
@@ -364,6 +534,17 @@ export class BotController {
     ]);
     rows.push([{ text: 'Back', callback_data: CALLBACK_PREFIX.backWorkspaces }]);
     return rows;
+  }
+
+  private buildThreadActionButtons(threadId: string, workspaceAlias: string): InlineKeyboardButton[][] {
+    return [
+      [
+        { text: 'Resume', callback_data: this.callbackAction(CALLBACK_PREFIX.resumeThread, threadId, workspaceAlias) },
+        { text: 'Approve', callback_data: this.callbackAction(CALLBACK_PREFIX.approveThread, threadId, workspaceAlias) }
+      ],
+      [{ text: 'Send', callback_data: this.callbackAction(CALLBACK_PREFIX.sendHint, threadId, workspaceAlias) }],
+      [{ text: 'Back', callback_data: this.callbackAction(CALLBACK_PREFIX.backChats, threadId, workspaceAlias) }]
+    ];
   }
 
   private callbackWorkspace(workspaceAlias: string): string {

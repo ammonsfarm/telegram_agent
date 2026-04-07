@@ -47,4 +47,39 @@ describe('TaskService', () => {
     expect(canceled.status).toBe('canceled');
     expect(fixture.runner.cancellations).toContain(task.id);
   });
+
+  it('queues a resume task tied to an existing Codex thread id', async () => {
+    const fixture = await createTaskServiceFixture();
+    fixtures.push(fixture);
+
+    const task = await fixture.taskService.createResumeTask(
+      1,
+      10,
+      'repo',
+      'thread-123',
+      'Resume previous thread'
+    );
+
+    const result = await fixture.taskService.runNextQueuedTask();
+
+    expect(task.runnerTaskId).toBe('thread-123');
+    expect(fixture.runner.resumeCalls).toContain('thread-123');
+    expect(result?.status).toBe('completed');
+  });
+
+  it('lists active and waiting tasks', async () => {
+    const fixture = await createTaskServiceFixture();
+    fixtures.push(fixture);
+    fixture.runner.mode = 'approval';
+
+    await fixture.taskService.createTask(1, 10, 'repo', 'Needs approval');
+    await fixture.taskService.runNextQueuedTask();
+
+    const active = await fixture.taskService.listActiveTasks();
+    const waiting = await fixture.taskService.listWaitingTasks();
+
+    expect(active).toHaveLength(1);
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]?.status).toBe('waiting_for_approval');
+  });
 });
